@@ -1,8 +1,4 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
-import 'package:path/path.dart' as path;
-import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 
 import '../providers/book_provider.dart';
@@ -47,7 +43,6 @@ class _WebDavImportScreenState extends State<WebDavImportScreen> {
 
   bool _busy = false;
   String _statusMessage = '准备就绪';
-  DateTime _lastProgressUpdate = DateTime.fromMillisecondsSinceEpoch(0);
 
   @override
   void initState() {
@@ -227,7 +222,7 @@ class _WebDavImportScreenState extends State<WebDavImportScreen> {
     });
   }
 
-  /// 导入选中的音频文件（下载到本地后创建书籍）
+  /// 导入选中的音频文件到书架（只记录远程路径，播放时按需从网盘拉取缓存）
   Future<void> _importSelected() async {
     final source = _currentSource;
     if (source == null) return;
@@ -244,65 +239,31 @@ class _WebDavImportScreenState extends State<WebDavImportScreen> {
 
     setState(() {
       _busy = true;
-      _statusMessage = '准备下载...';
+      _statusMessage = '正在创建书籍...';
     });
 
     try {
-      // 创建本地保存目录：应用文档目录/webdav_books/<书籍名>
-      final docsDir = await getApplicationDocumentsDirectory();
-      final localDir = Directory(path.join(
-        docsDir.path,
-        'webdav_books',
-        Helpers.sanitizeFileName(bookName),
-      ));
-      await localDir.create(recursive: true);
-
-      // 按自然排序下载选中的文件
+      // 按自然排序
       final selected = _entries
           .where((e) => _selectedPaths.contains(e.path))
           .toList()
         ..sort((a, b) => naturalCompare(a.name, b.name));
 
-      final downloadedFiles = <File>[];
-      for (int i = 0; i < selected.length; i++) {
-        final info = selected[i];
-        final localPath = path.join(localDir.path, info.name);
-
-        await _service.downloadFile(
-          source,
-          info.path,
-          localPath,
-          onProgress: (count, total) {
-            _throttleStatus(() {
-              final sizeText = total > 0
-                  ? '${Helpers.formatFileSize(count)}/${Helpers.formatFileSize(total)}'
-                  : Helpers.formatFileSize(count);
-              _statusMessage = '正在下载 (${i + 1}/${selected.length}) '
-                  '${info.name} $sizeText';
-            });
-          },
-        );
-        downloadedFiles.add(File(localPath));
-      }
-
-      setState(() {
-        _statusMessage = '正在导入书籍...';
-      });
-
-      // 复用统一的导入逻辑创建书籍
+      // 只记录远程路径，不下载；播放时自动从网盘拉取到本地缓存
       final bookProvider = context.read<BookProvider>();
-      final createdBook = await bookProvider.importAudioFiles(
+      final createdBook = await bookProvider.createWebDavBook(
         title: bookName,
         author: _authorController.text.trim().isEmpty
             ? null
             : _authorController.text.trim(),
-        files: downloadedFiles,
-        sourceFolderPath: localDir.path,
-        onProgress: (current, total) {
-          _throttleStatus(() {
-            _statusMessage = '正在读取音频信息 ($current/$total)...';
-          });
-        },
+        webdavSourceId: source.id,
+        files: selected
+            .map((e) => WebDavRemoteFileInfo(
+                  remotePath: e.path,
+                  fileName: e.name,
+                  fileSize: e.size,
+                ))
+            .toList(),
       );
 
       if (createdBook == null) {
@@ -313,7 +274,7 @@ class _WebDavImportScreenState extends State<WebDavImportScreen> {
       setState(() {
         _statusMessage = '导入完成！';
       });
-      _showSnack('成功导入《$bookName》，共 ${downloadedFiles.length} 个音频文件');
+      _showSnack('成功导入《$bookName》，共 ${selected.length} 个音频文件（在线播放，自动缓存）');
 
       // 延迟返回书架
       Future.delayed(const Duration(milliseconds: 600), () {
@@ -357,16 +318,6 @@ class _WebDavImportScreenState extends State<WebDavImportScreen> {
       _disconnect();
     } else {
       await _loadSources();
-    }
-  }
-
-  /// 进度刷新节流（避免频繁 setState）
-  void _throttleStatus(VoidCallback update) {
-    final now = DateTime.now();
-    if (now.difference(_lastProgressUpdate).inMilliseconds < 100) return;
-    _lastProgressUpdate = now;
-    if (mounted) {
-      setState(update);
     }
   }
 
@@ -565,7 +516,8 @@ class _WebDavImportScreenState extends State<WebDavImportScreen> {
               '使用说明：\n'
               '• 服务器地址填写 WebDAV 服务根地址（如 https://dav.jianguoyun.com/dav）\n'
               '• 连接成功后可在网盘目录中浏览并勾选音频文件\n'
-              '• 勾选的文件会下载到本地后导入为书籍',
+              '• 导入后在线播放：点击播放时自动从网盘拉取到本地缓存\n'
+              '• 自动预取后续 2 个文件，停止播放超过 1 天自动清除缓存',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: Colors.grey[600],
                     height: 1.5,
@@ -703,8 +655,8 @@ class _WebDavImportScreenState extends State<WebDavImportScreen> {
                     onPressed: (_busy || _selectedPaths.isEmpty)
                         ? null
                         : _importSelected,
-                    icon: const Icon(Icons.download_done),
-                    label: const Text('下载并导入'),
+                    icon: const Icon(Icons.library_add_outlined),
+                    label: const Text('导入书架'),
                   ),
                 ],
               ),

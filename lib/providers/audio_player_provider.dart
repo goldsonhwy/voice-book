@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io' as io;
 
 import 'package:flutter/foundation.dart';
@@ -13,6 +14,8 @@ import '../services/database_service.dart';
 import '../services/audio_handler.dart';
 import '../main.dart' show audioHandler;
 import '../services/audio_transcode_service.dart';
+import '../services/webdav_cache_service.dart';
+import '../services/webdav_service.dart';
 import 'package:sqflite/sqflite.dart';
 
 /// 音频播放器 Provider
@@ -55,6 +58,12 @@ class AudioPlayerProvider extends ChangeNotifier implements AudioControlCallback
   /// 错误信息
   String? _errorMessage;
 
+  /// 当前 WebDAV 远程文件解析后的本地缓存路径
+  String? _resolvedLocalPath;
+
+  /// 加载提示消息（如 WebDAV 文件下载进度）
+  String? _loadingMessage;
+
   /// 是否已触发播放完成处理（防止重复触发）
   bool _hasTriggeredCompletion = false;
 
@@ -67,6 +76,7 @@ class AudioPlayerProvider extends ChangeNotifier implements AudioControlCallback
   double get playbackSpeed => _playbackSpeed;
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
+  String? get loadingMessage => _loadingMessage;
 
   /// 是否正在播放
   bool get isPlaying => _playerState.playing;
@@ -164,6 +174,18 @@ class AudioPlayerProvider extends ChangeNotifier implements AudioControlCallback
 
       if (result.isNotEmpty) {
         final audioFile = AudioFile.fromMap(result.first);
+
+        // WebDAV 远程文件：恢复状态但暂不加载播放列表，播放时再拉取缓存
+        if (audioFile.isRemote) {
+          _currentAudioFile = audioFile;
+          _currentBookId = result.first['book_id'] as int?;
+          if (_currentBookId != null) {
+            await _loadBookInfo(_currentBookId!);
+          }
+          notifyListeners();
+          return;
+        }
+
         // 验证文件是否存在
         final file = io.File(audioFile.filePath);
         if (await file.exists()) {
@@ -208,11 +230,16 @@ class AudioPlayerProvider extends ChangeNotifier implements AudioControlCallback
         _isLoading = false;
       }
 
-      // 当播放完成时，检查是否需要自动播放下一个
+      // 播放完成时/播放中处理
       if (state.processingState == ProcessingState.completed && !_hasTriggeredCompletion) {
         debugPrint('✅ 检测到播放完成，准备触发自动播放');
         _hasTriggeredCompletion = true;
         _onPlaybackCompleted();
+      }
+
+      // WebDAV 开始播放：记录播放时间并预取后续文件
+      if (state.playing && _currentAudioFile?.isRemote == true) {
+        _onRemotePlaybackStarted();
       }
 
       notifyListeners();
@@ -295,8 +322,12 @@ class AudioPlayerProvider extends ChangeNotifier implements AudioControlCallback
       // 加载书籍信息（用于获取跳过设置）
       await _loadBookInfo(_currentBookId!);
 
+      // WebDAV 远程文件：先确保本地缓存就绪，再加载播放列表
+      _resolvedLocalPath = await _resolveRemoteForPlay(audioFile);
+
       // 加载书籍播放列表（包含正确的索引，通知栏会显示正确标题，自动处理转码）
-      await _loadBookPlaylist(audioFile, _currentBookId!);
+      await _loadBookPlaylist(audioFile, _currentBookId!,
+          overrideLocalPath: _resolvedLocalPath);
       notifyListeners();
 
       // 恢复播放进度
@@ -349,7 +380,19 @@ class AudioPlayerProvider extends ChangeNotifier implements AudioControlCallback
       // 如果播放器处于 idle 状态，需要先加载音频源
       if (_playerState.processingState == ProcessingState.idle && _currentAudioFile != null && _currentBookId != null) {
         debugPrint('播放器处于 idle 状态，重新加载播放列表');
-        await _loadBookPlaylist(_currentAudioFile!, _currentBookId!);
+        // WebDAV 远程文件：先确保本地缓存
+        if (_currentAudioFile!.isRemote && _resolvedLocalPath == null) {
+          _resolvedLocalPath = await _resolveRemoteForPlay(_currentAudioFile!);
+        }
+        await _loadBookPlaylist(
+          _currentAudioFile!,
+          _currentBookId!,
+          overrideLocalPath: _currentAudioFile!.isRemote
+              ? _resolvedLocalPath
+              : null,
+        );
+        // 恢复播放进度
+        await _restoreProgress();
       }
 
       _audioPlayer.play();
@@ -688,13 +731,16 @@ class AudioPlayerProvider extends ChangeNotifier implements AudioControlCallback
 
     final audioFile = AudioFile.fromMap(result.first);
 
-    // 验证文件是否存在
-    final file = io.File(audioFile.filePath);
-    if (!await file.exists()) {
-      debugPrint('音频文件不存在: ${audioFile.filePath}');
-      // 清理无效的播放进度
-      await db.delete('playback_progress', where: 'audio_file_id = ?', whereArgs: [audioFile.id]);
-      return null;
+    // WebDAV 远程文件：不检查本地文件是否存在（播放时按需拉取缓存）
+    if (!audioFile.isRemote) {
+      // 验证文件是否存在
+      final file = io.File(audioFile.filePath);
+      if (!await file.exists()) {
+        debugPrint('音频文件不存在: ${audioFile.filePath}');
+        // 清理无效的播放进度
+        await db.delete('playback_progress', where: 'audio_file_id = ?', whereArgs: [audioFile.id]);
+        return null;
+      }
     }
 
     return audioFile;
@@ -734,6 +780,14 @@ class AudioPlayerProvider extends ChangeNotifier implements AudioControlCallback
       // 加载书籍信息（用于获取跳过设置）
       await _loadBookInfo(bookId);
 
+      // WebDAV 远程文件：暂不拉取缓存，用户点击播放/章节时再下载
+      if (audioFile.isRemote) {
+        _resolvedLocalPath = null;
+        debugPrint('📚 WebDAV 远程文件已定位: ${audioFile.fileName}，播放时再拉取缓存');
+        notifyListeners();
+        return audioFile;
+      }
+
       // 加载书籍的所有音频文件作为播放列表（支持通知栏按钮）
       await _loadBookPlaylist(audioFile, bookId);
 
@@ -749,9 +803,123 @@ class AudioPlayerProvider extends ChangeNotifier implements AudioControlCallback
     }
   }
 
+  /// 解析 WebDAV 远程文件到本地缓存路径
+  ///
+  /// 已缓存直接返回本地路径；未缓存则从 WebDAV 下载（带进度提示）。
+  /// 本地文件返回 null。
+  Future<String?> _resolveRemoteForPlay(AudioFile audioFile) async {
+    if (!audioFile.isRemote) {
+      _resolvedLocalPath = null;
+      return null;
+    }
+
+    final book = _currentBook;
+    final bookId = _currentBookId;
+    if (book == null || bookId == null || book.webdavSourceId == null) {
+      throw Exception('书籍缺少 WebDAV 书源信息');
+    }
+
+    final sources = await WebDavSourceStore().loadSources();
+    WebDavSource? source;
+    for (final s in sources) {
+      if (s.id == book.webdavSourceId) {
+        source = s;
+        break;
+      }
+    }
+    if (source == null) {
+      throw Exception('WebDAV 书源不存在，请在导入页重新添加');
+    }
+
+    _loadingMessage = '正在从网盘加载 ${audioFile.fileName}...';
+    notifyListeners();
+
+    String lastPercent = '';
+    try {
+      final file = await WebDavCacheService().ensureLocal(
+        source,
+        bookId,
+        audioFile,
+        onProgress: (count, total) {
+          if (total <= 0) return;
+          final percent = (count / total * 100).toStringAsFixed(0);
+          if (percent == lastPercent) return;
+          lastPercent = percent;
+          _loadingMessage = '正在从网盘加载 ${audioFile.fileName} $percent%';
+          notifyListeners();
+        },
+      );
+      _loadingMessage = null;
+      notifyListeners();
+      return file.path;
+    } catch (e) {
+      _loadingMessage = null;
+      notifyListeners();
+      rethrow;
+    }
+  }
+
+  /// WebDAV 开始播放：记录播放时间并预取后续文件
+  void _onRemotePlaybackStarted() {
+    // 记录播放时间（用于闲置 24 小时自动清缓存的判断）
+    unawaited(WebDavCacheService().recordPlayTime());
+    unawaited(_prefetchNextFiles());
+  }
+
+  /// 预取当前音频之后的几个文件到本地缓存
+  Future<void> _prefetchNextFiles() async {
+    final audioFile = _currentAudioFile;
+    final book = _currentBook;
+    if (audioFile == null || book == null || book.webdavSourceId == null) {
+      return;
+    }
+
+    try {
+      final sources = await WebDavSourceStore().loadSources();
+      WebDavSource? source;
+      for (final s in sources) {
+        if (s.id == book.webdavSourceId) {
+          source = s;
+          break;
+        }
+      }
+      if (source == null) return;
+
+      final db = await _databaseService.database;
+      final maps = await db.query(
+        'audio_files',
+        where: 'book_id = ?',
+        whereArgs: [book.id],
+        orderBy: 'sort_order ASC, file_name ASC',
+      );
+      final files = maps.map((map) => AudioFile.fromMap(map)).toList();
+      final currentIndex = files.indexWhere((a) => a.id == audioFile.id);
+      if (currentIndex < 0) return;
+
+      final upcoming = files
+          .skip(currentIndex + 1)
+          .where((a) => a.isRemote)
+          .take(WebDavCacheService.prefetchCount)
+          .toList();
+      if (upcoming.isEmpty) return;
+
+      debugPrint('⏬ 预取后续 ${upcoming.length} 个文件: '
+          '${upcoming.map((a) => a.fileName).join(', ')}');
+      await WebDavCacheService().prefetch(source, book.id!, upcoming);
+    } catch (e) {
+      debugPrint('预取 WebDAV 文件失败: $e');
+    }
+  }
+
   /// 加载书籍的所有音频作为播放列表（支持通知栏的上一个/下一个按钮）
   /// 自动处理需要转码的音频格式
-  Future<void> _loadBookPlaylist(AudioFile currentAudio, int bookId) async {
+  ///
+  /// [overrideLocalPath] WebDAV 远程文件解析后的本地缓存路径（仅当前音频）
+  Future<void> _loadBookPlaylist(
+    AudioFile currentAudio,
+    int bookId, {
+    String? overrideLocalPath,
+  }) async {
     try {
       final db = await _databaseService.database;
       final audioFileMaps = await db.query(
@@ -761,10 +929,14 @@ class AudioPlayerProvider extends ChangeNotifier implements AudioControlCallback
         orderBy: 'sort_order ASC, file_name ASC',
       );
 
+      // 是否包含 WebDAV 远程文件（远程文件未全部缓存，只能单文件播放）
+      final isWebDavBook = audioFileMaps.any((m) => m['remote_path'] != null);
+      final playPath = overrideLocalPath ?? currentAudio.filePath;
+
       // 处理当前音频的转码
       final transcodeService = AudioTranscodeService();
       String? transcodedPath;
-      if (transcodeService.needsTranscode(currentAudio.filePath)) {
+      if (transcodeService.needsTranscode(playPath)) {
         // lite 版本不支持转码，抛出异常
         if (!AudioTranscodeService.isSupported) {
           throw TranscodeNotSupportedException();
@@ -773,13 +945,16 @@ class AudioPlayerProvider extends ChangeNotifier implements AudioControlCallback
         if (!transcodeService.isInitialized) {
           await transcodeService.initialize();
         }
-        transcodedPath = await transcodeService.transcodeToWav(currentAudio.filePath);
+        transcodedPath = await transcodeService.transcodeToWav(playPath);
         debugPrint('✅ 转码完成: $transcodedPath');
       }
 
-      if (audioFileMaps.isEmpty) {
-        debugPrint('❌ 书籍中没有音频文件，加载单个音频, bookId: $bookId');
-        await audioHandler.setAudioSource(_createAudioSource(currentAudio, overridePath: transcodedPath));
+      if (audioFileMaps.isEmpty || isWebDavBook) {
+        debugPrint('📚 加载单个音频（${isWebDavBook ? 'WebDAV 远程模式' : '无播放列表'}）: ${currentAudio.fileName}');
+        // 先设置音频源（会触发 currentIndexStream 发出 0）
+        final effectivePath = transcodedPath ?? overrideLocalPath;
+        await audioHandler.setAudioSource(_createAudioSource(currentAudio, overridePath: effectivePath));
+        // 再更新队列，确保 mediaItem 显示正确的标题
         audioHandler.updateQueueWithIndex([_createMediaItem(currentAudio, _currentBook)], 0);
         return;
       }

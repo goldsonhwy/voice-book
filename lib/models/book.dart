@@ -41,6 +41,9 @@ class Book {
   /// 源文件夹路径（用于重新扫描）
   final String? sourceFolderPath;
 
+  /// WebDAV 书源 ID（WebDAV 导入的书籍关联到书源配置）
+  final String? webdavSourceId;
+
   Book({
     this.id,
     required this.title,
@@ -55,6 +58,7 @@ class Book {
     required this.createdAt,
     required this.updatedAt,
     this.sourceFolderPath,
+    this.webdavSourceId,
   });
 
   /// 从数据库 Map 创建 Book 对象
@@ -73,6 +77,7 @@ class Book {
       createdAt: map['created_at'] as int,
       updatedAt: map['updated_at'] as int,
       sourceFolderPath: map['source_folder_path'] as String?,
+      webdavSourceId: map['webdav_source_id'] as String?,
     );
   }
 
@@ -92,6 +97,7 @@ class Book {
       'created_at': createdAt,
       'updated_at': updatedAt,
       'source_folder_path': sourceFolderPath,
+      'webdav_source_id': webdavSourceId,
     };
   }
 
@@ -110,6 +116,7 @@ class Book {
     int? createdAt,
     int? updatedAt,
     String? sourceFolderPath,
+    String? webdavSourceId,
   }) {
     return Book(
       id: id ?? this.id,
@@ -125,6 +132,7 @@ class Book {
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       sourceFolderPath: sourceFolderPath ?? this.sourceFolderPath,
+      webdavSourceId: webdavSourceId ?? this.webdavSourceId,
     );
   }
 
@@ -150,7 +158,8 @@ class Book {
         other.skipEndSeconds == skipEndSeconds &&
         other.createdAt == createdAt &&
         other.updatedAt == updatedAt &&
-        other.sourceFolderPath == sourceFolderPath;
+        other.sourceFolderPath == sourceFolderPath &&
+        other.webdavSourceId == webdavSourceId;
   }
 
   @override
@@ -169,6 +178,7 @@ class Book {
       createdAt,
       updatedAt,
       sourceFolderPath,
+      webdavSourceId,
     );
   }
 }

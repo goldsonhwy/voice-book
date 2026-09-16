@@ -26,6 +26,9 @@ class AudioFile {
   /// 创建时间（Unix 时间戳，毫秒）
   final int createdAt;
 
+  /// WebDAV 远程路径（非空表示该文件来自 WebDAV 网盘，播放时按需拉取到本地缓存）
+  final String? remotePath;
+
   AudioFile({
     this.id,
     required this.bookId,
@@ -35,7 +38,11 @@ class AudioFile {
     required this.duration,
     this.sortOrder = 0,
     required this.createdAt,
+    this.remotePath,
   });
+
+  /// 是否为 WebDAV 远程文件
+  bool get isRemote => remotePath != null && remotePath!.isNotEmpty;
 
   /// 从数据库 Map 创建 AudioFile 对象
   factory AudioFile.fromMap(Map<String, dynamic> map) {
@@ -48,6 +55,7 @@ class AudioFile {
       duration: map['duration'] as int,
       sortOrder: map['sort_order'] as int? ?? 0,
       createdAt: map['created_at'] as int,
+      remotePath: map['remote_path'] as String?,
     );
   }
 
@@ -62,6 +70,7 @@ class AudioFile {
       'duration': duration,
       'sort_order': sortOrder,
       'created_at': createdAt,
+      if (remotePath != null) 'remote_path': remotePath,
     };
   }
 
@@ -75,6 +84,7 @@ class AudioFile {
     int? duration,
     int? sortOrder,
     int? createdAt,
+    String? remotePath,
   }) {
     return AudioFile(
       id: id ?? this.id,
@@ -85,6 +95,7 @@ class AudioFile {
       duration: duration ?? this.duration,
       sortOrder: sortOrder ?? this.sortOrder,
       createdAt: createdAt ?? this.createdAt,
+      remotePath: remotePath ?? this.remotePath,
     );
   }
 
@@ -141,7 +152,8 @@ class AudioFile {
         other.fileSize == fileSize &&
         other.duration == duration &&
         other.sortOrder == sortOrder &&
-        other.createdAt == createdAt;
+        other.createdAt == createdAt &&
+        other.remotePath == remotePath;
   }
 
   @override
@@ -155,6 +167,7 @@ class AudioFile {
       duration,
       sortOrder,
       createdAt,
+      remotePath,
     );
   }
 }

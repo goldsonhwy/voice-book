@@ -47,7 +47,7 @@ class DatabaseService {
 
     return await openDatabase(
       path,
-      version: 3,
+      version: 4,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
       onConfigure: _onConfigure,
@@ -88,7 +88,8 @@ class DatabaseService {
         skip_end_seconds INTEGER DEFAULT 0,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
-        source_folder_path TEXT
+        source_folder_path TEXT,
+        webdav_source_id TEXT
       )
     ''');
 
@@ -103,6 +104,7 @@ class DatabaseService {
         duration INTEGER NOT NULL,
         sort_order INTEGER DEFAULT 0,
         created_at INTEGER NOT NULL,
+        remote_path TEXT,
         FOREIGN KEY (book_id) REFERENCES books (id) ON DELETE CASCADE
       )
     ''');
@@ -153,6 +155,11 @@ class DatabaseService {
     // 从版本 2 升级到版本 3：添加源文件夹路径字段
     if (oldVersion < 3) {
       await db.execute('ALTER TABLE books ADD COLUMN source_folder_path TEXT');
+    }
+    // 从版本 3 升级到版本 4：添加 WebDAV 支持字段
+    if (oldVersion < 4) {
+      await db.execute('ALTER TABLE books ADD COLUMN webdav_source_id TEXT');
+      await db.execute('ALTER TABLE audio_files ADD COLUMN remote_path TEXT');
     }
   }
 

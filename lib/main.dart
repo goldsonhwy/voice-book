@@ -10,6 +10,7 @@ import 'providers/settings_provider.dart';
 import 'providers/sleep_timer_provider.dart';
 import 'services/database_service.dart';
 import 'services/audio_handler.dart';
+import 'services/webdav_cache_service.dart';
 import 'utils/constants.dart';
 import 'screens/book_list_screen.dart';
 import 'screens/file_import_screen.dart';
@@ -46,6 +47,11 @@ void main() async {
   // 初始化设置 Provider
   final settingsProvider = SettingsProvider();
   await settingsProvider.initialize();
+
+  // 检查 WebDAV 缓存：停止播放超过 1 天自动清除（不阻塞启动）
+  Future.microtask(() {
+    WebDavCacheService().clearStaleCache();
+  });
 
   runApp(VoiceBookApp(settingsProvider: settingsProvider));
 }

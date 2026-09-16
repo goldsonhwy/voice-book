@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:audio_metadata_reader/audio_metadata_reader.dart' as meta;
@@ -5,6 +6,7 @@ import '../models/book.dart';
 import '../models/audio_file.dart';
 import '../services/database_service.dart';
 import '../services/file_scanner_service.dart';
+import '../services/webdav_cache_service.dart';
 
 /// 书籍管理 Provider
 ///
@@ -154,6 +156,9 @@ class BookProvider extends ChangeNotifier {
         where: 'id = ?',
         whereArgs: [id],
       );
+
+      // 删除书籍时同时清理其 WebDAV 缓存
+      unawaited(WebDavCacheService().clearBookCache(id));
 
       _books.removeWhere((book) => book.id == id);
 
@@ -435,8 +440,11 @@ class BookProvider extends ChangeNotifier {
     try {
       final db = await _databaseService.database;
 
-      // 查找所有 duration=0 的音频文件
-      final rows = await db.query('audio_files', where: 'duration = 0');
+      // 查找所有 duration=0 的本地音频文件（跳过 WebDAV 远程文件）
+      final rows = await db.query(
+        'audio_files',
+        where: 'duration = 0 AND remote_path IS NULL',
+      );
       if (rows.isEmpty) return;
 
       // 在隔离线程中批量读取时长
@@ -545,6 +553,67 @@ class BookProvider extends ChangeNotifier {
 
     return createdBook;
   }
+
+  /// 创建 WebDAV 书籍（只记录远程路径，不下载文件，播放时按需拉取缓存）
+  ///
+  /// [files] 远程文件信息列表（已按播放顺序排好）
+  /// [webdavSourceId] 关联的书源 ID
+  Future<Book?> createWebDavBook({
+    required String title,
+    String? author,
+    required String webdavSourceId,
+    required List<WebDavRemoteFileInfo> files,
+  }) async {
+    if (files.isEmpty) return null;
+
+    final now = DateTime.now().millisecondsSinceEpoch;
+
+    final book = Book(
+      title: title,
+      author: author,
+      createdAt: now,
+      updatedAt: now,
+      webdavSourceId: webdavSourceId,
+    );
+
+    final createdBook = await createBook(book);
+    if (createdBook == null) return null;
+
+    final db = await _databaseService.database;
+    for (int i = 0; i < files.length; i++) {
+      final info = files[i];
+      final audioFile = AudioFile(
+        bookId: createdBook.id!,
+        // 远程书籍没有本地文件，file_path 存远程路径用于标识
+        filePath: info.remotePath,
+        fileName: info.fileName,
+        fileSize: info.fileSize,
+        duration: 0,
+        sortOrder: i,
+        createdAt: now,
+        remotePath: info.remotePath,
+      );
+      await db.insert('audio_files', audioFile.toMap());
+    }
+
+    // 刷新书籍列表
+    await loadBooks();
+
+    return createdBook;
+  }
+}
+
+/// WebDAV 远程文件信息（导入时使用）
+class WebDavRemoteFileInfo {
+  final String remotePath;
+  final String fileName;
+  final int fileSize;
+
+  const WebDavRemoteFileInfo({
+    required this.remotePath,
+    required this.fileName,
+    required this.fileSize,
+  });
 }
 
 /// 在隔离线程中读取音频时长（顶层函数）

@@ -93,6 +93,19 @@ class _PlayerScreenState extends State<PlayerScreen> {
                         // 播放控制按钮
                         _buildPlaybackControls(context, audioPlayer),
 
+                        // WebDAV 远程文件加载提示
+                        if (audioPlayer.loadingMessage != null) ...[
+                          const SizedBox(height: 8),
+                          Text(
+                            audioPlayer.loadingMessage!,
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodySmall
+                                ?.copyWith(color: Colors.grey[600]),
+                            textAlign: TextAlign.center,
+                          ),
+                        ],
+
                         // 倍速和其他控制
                         _buildAdditionalControls(context, audioPlayer),
                       ],
