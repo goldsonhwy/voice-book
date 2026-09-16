@@ -77,6 +77,40 @@ class _BookListScreenState extends State<BookListScreen> {
     return filtered;
   }
 
+  /// 显示导入方式选择（本地文件夹 / WebDAV 网盘）
+  void _showImportOptions() {
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.folder_open),
+              title: const Text('本地文件夹'),
+              subtitle: const Text('从手机存储导入音频文件夹'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.of(context, rootNavigator: true)
+                    .pushNamed('/file-import');
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.cloud_outlined),
+              title: const Text('WebDAV 网盘'),
+              subtitle: const Text('从 WebDAV 网盘浏览并导入音频'),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.of(context, rootNavigator: true)
+                    .pushNamed('/webdav-import');
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -255,9 +289,7 @@ class _BookListScreenState extends State<BookListScreen> {
       floatingActionButton: Padding(
         padding: const EdgeInsets.only(bottom: 72),
         child: FloatingActionButton.extended(
-          onPressed: () {
-            Navigator.of(context, rootNavigator: true).pushNamed('/file-import');
-          },
+          onPressed: _showImportOptions,
           icon: const Icon(Icons.add),
           label: const Text('导入书籍'),
         ),

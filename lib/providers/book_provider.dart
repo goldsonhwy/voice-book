@@ -4,6 +4,7 @@ import 'package:audio_metadata_reader/audio_metadata_reader.dart' as meta;
 import '../models/book.dart';
 import '../models/audio_file.dart';
 import '../services/database_service.dart';
+import '../services/file_scanner_service.dart';
 
 /// 书籍管理 Provider
 ///
@@ -479,6 +480,70 @@ class BookProvider extends ChangeNotifier {
     } catch (e) {
       debugPrint('补全音频时长失败: $e');
     }
+  }
+
+  /// 将本地音频文件导入为书籍（本地导入与 WebDAV 导入共用）
+  ///
+  /// [files] 本地音频文件列表（已按播放顺序排好）
+  /// [sourceFolderPath] 源文件夹路径（用于后续重新扫描）
+  /// [onProgress] 元数据读取进度回调 (当前, 总数)
+  /// 返回创建的书籍；失败返回 null
+  Future<Book?> importAudioFiles({
+    required String title,
+    String? author,
+    required List<File> files,
+    String? sourceFolderPath,
+    void Function(int current, int total)? onProgress,
+  }) async {
+    if (files.isEmpty) return null;
+
+    // 读取所有音频文件的元数据
+    final metadataList = await FileScannerService().readMultipleMetadata(
+      files,
+      onProgress: onProgress,
+    );
+
+    // 计算总时长
+    int totalDuration = 0;
+    for (final metadata in metadataList) {
+      totalDuration += metadata.duration ?? 0;
+    }
+
+    final now = DateTime.now().millisecondsSinceEpoch;
+
+    // 创建书籍
+    final book = Book(
+      title: title,
+      author: author,
+      totalDuration: totalDuration,
+      createdAt: now,
+      updatedAt: now,
+      sourceFolderPath: sourceFolderPath,
+    );
+
+    final createdBook = await createBook(book);
+    if (createdBook == null) return null;
+
+    // 创建音频文件记录（使用已读取的元数据）
+    final db = await _databaseService.database;
+    for (int i = 0; i < files.length; i++) {
+      final metadata = metadataList[i];
+      final audioFile = AudioFile(
+        bookId: createdBook.id!,
+        filePath: metadata.filePath,
+        fileName: metadata.fileName,
+        fileSize: metadata.fileSize,
+        duration: metadata.duration ?? 0,
+        sortOrder: i,
+        createdAt: now,
+      );
+      await db.insert('audio_files', audioFile.toMap());
+    }
+
+    // 刷新书籍列表（会自动触发后台补全时长）
+    await loadBooks();
+
+    return createdBook;
   }
 }
 

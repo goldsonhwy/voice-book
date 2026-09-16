@@ -13,6 +13,7 @@ import 'services/audio_handler.dart';
 import 'utils/constants.dart';
 import 'screens/book_list_screen.dart';
 import 'screens/file_import_screen.dart';
+import 'screens/webdav_import_screen.dart';
 import 'screens/player_screen.dart';
 import 'models/book.dart';
 import 'models/audio_file.dart';
@@ -170,6 +171,10 @@ class VoiceBookApp extends StatelessWidget {
                 case '/file-import':
                   return MaterialPageRoute(
                     builder: (_) => const FileImportScreen(),
+                  );
+                case '/webdav-import':
+                  return MaterialPageRoute(
+                    builder: (_) => const WebDavImportScreen(),
                   );
                 case '/book-detail':
                   return null; // 不使用路由，直接在BookListScreen中导航

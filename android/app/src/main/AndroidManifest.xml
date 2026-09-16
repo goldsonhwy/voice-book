@@ -19,10 +19,14 @@
     <!-- 唤醒锁权限 - 保持播放时不休眠 -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
+    <!-- 网络权限 - WebDAV 网盘导入 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <application
-        android:label="voice_book"
+        android:label="voice_book_mod"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        android:usesCleartextTraffic="true">
         <!-- 修改 Activity 的 name 以支持 audio_service -->
         <activity
             android:name="com.ryanheise.audioservice.AudioServiceActivity"

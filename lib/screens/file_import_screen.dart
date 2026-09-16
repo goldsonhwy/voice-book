@@ -5,8 +5,6 @@ import 'package:file_picker/file_picker.dart';
 import '../services/permission_service.dart';
 import '../services/file_scanner_service.dart';
 import '../providers/book_provider.dart';
-import '../models/book.dart';
-import '../models/audio_file.dart';
 
 /// 文件导入页面
 ///
@@ -201,9 +199,14 @@ class _FileImportScreenState extends State<FileImportScreen> {
     try {
       final bookProvider = context.read<BookProvider>();
 
-      // 读取所有音频文件的元数据
-      final metadataList = await _scannerService.readMultipleMetadata(
-        _scannedFiles,
+      // 读取元数据并创建书籍（与 WebDAV 导入共用逻辑）
+      final createdBook = await bookProvider.importAudioFiles(
+        title: bookName,
+        author: _authorController.text.trim().isEmpty
+            ? null
+            : _authorController.text.trim(),
+        files: _scannedFiles,
+        sourceFolderPath: _selectedFolderPath,
         onProgress: (current, total) {
           setState(() {
             _statusMessage = '正在读取音频信息 ($current/$total)...';
@@ -211,51 +214,9 @@ class _FileImportScreenState extends State<FileImportScreen> {
         },
       );
 
-      // 计算总时长
-      int totalDuration = 0;
-      for (final metadata in metadataList) {
-        totalDuration += metadata.duration ?? 0;
-      }
-
-      setState(() {
-        _statusMessage = '正在创建书籍...';
-      });
-
-      // 创建书籍
-      final book = Book(
-        title: bookName,
-        author: _authorController.text.trim().isEmpty
-            ? null
-            : _authorController.text.trim(),
-        totalDuration: totalDuration,
-        createdAt: DateTime.now().millisecondsSinceEpoch,
-        updatedAt: DateTime.now().millisecondsSinceEpoch,
-        sourceFolderPath: _selectedFolderPath,
-      );
-
-      final createdBook = await bookProvider.createBook(book);
       if (createdBook == null) {
         throw Exception('创建书籍失败');
       }
-
-      // 创建音频文件记录（使用已读取的元数据）
-      final db = await bookProvider.databaseService.database;
-      for (int i = 0; i < _scannedFiles.length; i++) {
-        final metadata = metadataList[i];
-        final audioFile = AudioFile(
-          bookId: createdBook.id!,
-          filePath: metadata.filePath,
-          fileName: metadata.fileName,
-          fileSize: metadata.fileSize,
-          duration: metadata.duration ?? 0,
-          sortOrder: i,
-          createdAt: DateTime.now().millisecondsSinceEpoch,
-        );
-        await db.insert('audio_files', audioFile.toMap());
-      }
-
-      // 刷新书籍列表（会自动触发后台补全时长）
-      await bookProvider.loadBooks();
 
       setState(() {
         _statusMessage = '导入完成！';
